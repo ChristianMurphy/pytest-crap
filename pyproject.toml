@@ -1,0 +1,94 @@
+[project]
+name = "pytest-crap"
+version = "0.1.0"
+description = "pytest plugin that calculates CRAP scores to guide test writing"
+authors = [
+    {name = "Christian Murphy", email = "christian.murphy.42@gmail.com"}
+]
+license = {text = "MIT"}
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "pytest>=7.0",
+    "coverage>=6.0",
+    "radon>=5.1.0",
+    "rich>=10.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.1.0",
+    "pytest-cov>=4.0",
+]
+
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project.entry-points."pytest11"]
+crap = "pytest_crap.plugin:CrapPlugin"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+addopts = [
+    "--cov=pytest_crap",
+    "--cov-report=term-missing",
+    "--cov-report=html",
+    "--cov-fail-under=80",
+    "--cov-branch",
+]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP"]
+
+[dependency-groups]
+dev = [
+    "ruff (>=0.14.6,<0.15.0)",
+    "mypy (>=1.18.2,<2.0.0)",
+    "pytest-cov (>=7.0.0,<8.0.0)"
+]
+
+[tool.mypy]
+strict = true
+mypy_path = "stubs"
+
+[tool.coverage.run]
+source = ["pytest_crap"]
+branch = true
+omit = [
+    "*/tests/*",
+    "*/__pycache__/*",
+    "*/site-packages/*",
+]
+
+[tool.coverage.report]
+precision = 2
+show_missing = true
+skip_covered = false
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "@abstractmethod",
+    "@overload",
+]
+
+[tool.coverage.html]
+directory = "htmlcov"
+
+[tool.poetry]
+packages = [
+    { include = "pytest_crap" }
+]
+
+include = [
+    "pytest_crap/py.typed"
+]
