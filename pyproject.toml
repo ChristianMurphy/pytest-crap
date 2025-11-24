@@ -5,15 +5,43 @@ description = "pytest plugin that calculates CRAP scores to guide test writing"
 authors = [
     {name = "Christian Murphy", email = "christian.murphy.42@gmail.com"}
 ]
-license = {text = "MIT"}
+license = "MIT"
 readme = "readme.md"
 requires-python = ">=3.13"
+keywords = [
+    "pytest",
+    "pytest-plugin",
+    "testing",
+    "coverage",
+    "complexity",
+    "cyclomatic-complexity",
+    "crap",
+    "code-quality",
+    "metrics",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Framework :: Pytest",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Testing",
+    "Topic :: Software Development :: Quality Assurance",
+    "Typing :: Typed",
+]
 dependencies = [
     "pytest>=7.0",
     "coverage>=6.0",
     "radon>=5.1.0",
     "rich>=10.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/ChristianMurphy/pytest-crap"
+Repository = "https://github.com/ChristianMurphy/pytest-crap"
+Issues = "https://github.com/ChristianMurphy/pytest-crap/issues"
+Changelog = "https://github.com/ChristianMurphy/pytest-crap/blob/main/changelog.md"
 
 [project.optional-dependencies]
 dev = [
