@@ -1,18 +1,22 @@
 """pytest plugin for CRAP score reporting.
 
 This module registers CLI options and provides basic lifecycle hooks.
+Uses pytest_terminal_summary (with trylast=True) to run AFTER pytest-cov
+has finalized its coverage data.
 """
 
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING
+
+import pytest
 
 from pytest_crap import __version__
 
 if TYPE_CHECKING:
     from _pytest.config import Config
     from _pytest.config.argparsing import Parser
-    from _pytest.main import Session
     from _pytest.terminal import TerminalReporter
 
 
@@ -43,66 +47,104 @@ def pytest_addoption(parser: Parser) -> None:
 def pytest_configure(config: Config) -> None:
     if not config.getoption("--crap"):
         return
+    # Mark that CRAP reporting is enabled
+    setattr(config, "_pytest_crap_enabled", True)
 
-    # Basic check: ensure pytest-cov is present (we rely on coverage data)
+
+@pytest.hookimpl(trylast=True)
+def pytest_terminal_summary(
+    terminalreporter: TerminalReporter, exitstatus: int, config: Config
+) -> None:
+    """Generate CRAP report after pytest-cov has finished.
+
+    Using trylast=True ensures we run AFTER pytest-cov has:
+    1. Stopped coverage collection
+    2. Saved coverage data
+    3. Generated its own report
+    """
+    if not getattr(config, "_pytest_crap_enabled", False):
+        return
+
+    tr = terminalreporter
+
+    # Try to get coverage data from pytest-cov plugin
+    cov_plugin = config.pluginmanager.getplugin("_cov")
+    if cov_plugin is None:
+        tr.write_line("")
+        tr.write_sep("-", "pytest-crap: pytest-cov plugin not found; skipping CRAP report")
+        tr.write_line("  Make sure to run with: pytest --cov=<package> --crap")
+        return
+
+    # Get the coverage controller from pytest-cov
+    cov_controller = getattr(cov_plugin, "cov_controller", None)
+    if cov_controller is None:
+        tr.write_line("")
+        tr.write_sep("-", "pytest-crap: coverage controller not initialized; skipping CRAP report")
+        tr.write_line("  Make sure to run with: pytest --cov=<package> --crap")
+        return
+
+    # Get the coverage object from the controller
+    coverage_obj = getattr(cov_controller, "cov", None)
+    if coverage_obj is None:
+        tr.write_line("")
+        tr.write_sep("-", "pytest-crap: coverage object not found; skipping CRAP report")
+        return
+
     try:
-        setattr(config, "_pytest_crap_has_cov", True)
-    except Exception:
-        setattr(config, "_pytest_crap_has_cov", False)
+        # Get coverage data directly from the coverage object
+        data = coverage_obj.get_data()
 
+        # Build a mapping of filename -> set of covered lines
+        file_lines: dict[str, set[int]] = {}
+        for filename in data.measured_files():
+            raw_lines = data.lines(filename) or []
+            covered: set[int] = set(raw_lines)
+            file_lines[filename] = covered
 
-def pytest_sessionfinish(session: Session, exitstatus: int) -> None:
-    config: Config = session.config
-    if not getattr(config, "_pytest_crap_has_cov", False):
-        # If CRAP was requested but cov missing, write a warning to terminal
-        if config.getoption("--crap"):
-            tr: TerminalReporter | None = config.pluginmanager.getplugin("terminalreporter")
-            if tr:
-                tr.write_sep("-", "pytest-crap: coverage data not available; skipping CRAP report")
+        if not file_lines:
+            tr.write_line("")
+            tr.write_sep("-", "pytest-crap: no coverage data found")
+            return
 
-    # If enabled and coverage available, try to read coverage data and produce a report
-    if config.getoption("--crap") and getattr(config, "_pytest_crap_has_cov", False):
-        try:
-            # Use coverage.CoverageData to read .coverage file
-            from coverage import CoverageData
+        # Compute scores for files we can parse
+        from .calculator import calculate_crap
+        from .reporter import CrapReporter
 
-            data = CoverageData()
-            data.read()
+        reporter = CrapReporter()
+        all_scores = []
 
-            # Build a mapping of filename -> set of covered lines
-            file_lines: dict[str, set[int]] = {}
-            for filename in data.measured_files():
-                raw_lines = data.lines(filename) or []
-                covered: set[int] = set(raw_lines)
-                file_lines[filename] = covered
+        for filename, lines in file_lines.items():
+            # Skip test files and non-Python files
+            if "test" in os.path.basename(filename).lower() or not filename.endswith(".py"):
+                continue
+            try:
+                scores = calculate_crap(filename, lines)
+                all_scores.extend(scores)
+            except Exception as e:
+                # Only show parse errors in verbose mode
+                if config.option.verbose > 0:
+                    tr.write_line(f"pytest-crap: could not parse {filename}: {e}")
 
-            # Compute scores for files we can parse
-            from .calculator import calculate_crap
-            from .reporter import CrapReporter
+        if not all_scores:
+            tr.write_line("")
+            tr.write_sep("-", "pytest-crap: no functions found to analyze")
+            return
 
-            reporter = CrapReporter()
-            all_scores = []
-            for filename, lines in file_lines.items():
-                try:
-                    scores = calculate_crap(filename, lines)
-                    all_scores.extend(scores)
-                except Exception:
-                    # skip unparseable files but notify
-                    tr = config.pluginmanager.getplugin("terminalreporter")
-                    if tr is not None:
-                        tr.write_line(f"pytest-crap: could not parse {filename}; skipped")
+        top_n = config.getoption("--crap-top-n")
+        threshold = float(config.getoption("--crap-threshold"))
 
-            top_n = config.getoption("--crap-top-n")
-            threshold = float(config.getoption("--crap-threshold"))
+        # Print a blank line for spacing before our report
+        tr.write_line("")
 
-            reporter.render_function_table(all_scores, top_n=top_n)
-            reporter.render_file_summary(all_scores, top_n=top_n, threshold=threshold)
-            reporter.render_folder_summary(all_scores, top_n=top_n, threshold=threshold)
-        except Exception:
-            tr = config.pluginmanager.getplugin("terminalreporter")
-            if tr is not None:
-                tr.write_sep("-", "pytest-crap: failed to generate CRAP report")
+        reporter.render_function_table(all_scores, top_n=top_n)
+        reporter.render_file_summary(all_scores, top_n=top_n, threshold=threshold)
+        reporter.render_folder_summary(all_scores, top_n=top_n, threshold=threshold)
 
+    except Exception as e:
+        tr.write_line("")
+        tr.write_sep("-", f"pytest-crap: failed to generate CRAP report: {e}")
+        # In verbose mode, show the full traceback
+        if config.option.verbose > 0:
+            import traceback
 
-# Provide a symbol for setuptools entry point
-CrapPlugin = None
+            tr.write_line(traceback.format_exc())

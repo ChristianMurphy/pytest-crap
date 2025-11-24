@@ -188,7 +188,7 @@ When opening a PR, include:
 Releases are managed by maintainers. The process:
 
 1. Update version in `pytest_crap/__init__.py`
-2. Update CHANGELOG (if present)
+2. Update CHANGELOG
 3. Create a git tag
 4. Build and publish to PyPI
 

@@ -4,3 +4,8 @@
 __pycache__/
 htmlcov/
 .coverage*
+build/
+dist/
+*.egg-info/
+.eggs/
+.vscode/

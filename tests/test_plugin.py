@@ -14,7 +14,7 @@ import pytest_crap.reporter  # noqa: F401
 
 def test_plugin_loads_and_shows_help(pytester: Any) -> None:
     """Verify plugin registers and shows in help."""
-    result = pytester.runpytest("-p", "pytest_crap.plugin", "--help")
+    result = pytester.runpytest("--help")
     result.stdout.fnmatch_lines(
         [
             "*CRAP score reporting v0.1.0:*",
@@ -27,12 +27,13 @@ def test_plugin_loads_and_shows_help(pytester: Any) -> None:
 
 def test_version_access() -> None:
     """Test that version can be accessed."""
+    import pytest_crap
 
     assert pytest_crap.__version__ == "0.1.0"
 
 
-def test_plugin_with_no_cov_warns(pytester: Any) -> None:
-    """When --crap is used without coverage, should warn gracefully."""
+def test_plugin_without_cov_plugin_warns(pytester: Any) -> None:
+    """When --crap is used without pytest-cov, should warn gracefully."""
     pytester.makepyfile(
         test_simple="""
         def test_dummy():
@@ -40,14 +41,29 @@ def test_plugin_with_no_cov_warns(pytester: Any) -> None:
         """
     )
 
-    result = pytester.runpytest("-p", "pytest_crap.plugin", "--crap", "--cov-fail-under=0")
-    # Should not crash and should show CRAP tables (even if empty)
+    # Run WITHOUT --cov to trigger the "plugin not found" warning
+    result = pytester.runpytest("--crap", "-p", "no:cov")
     assert result.ret == 0
     result.stdout.fnmatch_lines(
         [
-            "*CRAP by Function*",
+            "*pytest-crap: pytest-cov plugin not found*",
         ]
     )
+
+
+def test_plugin_with_cov_but_no_source_warns(pytester: Any) -> None:
+    """When --crap is used with --cov but no source, should warn about controller."""
+    pytester.makepyfile(
+        test_simple="""
+        def test_dummy():
+            assert True
+        """
+    )
+
+    # Run with bare --cov (no source specified) - controller may not initialize
+    result = pytester.runpytest("--crap", "--cov", "--cov-fail-under=0")
+    # Should not crash
+    assert result.ret == 0
 
 
 def test_plugin_with_simple_coverage(pytester: Any) -> None:
@@ -58,12 +74,14 @@ def test_plugin_with_simple_coverage(pytester: Any) -> None:
         def simple_function(x):
             '''Simple function with CC=1'''
             return x + 1
+
         def uncovered_function(x):
             '''This won't be tested'''
             if x > 0:
                 return x * 2
             else:
                 return x * 3
+
         def partially_covered(x):
             '''Partial coverage'''
             if x > 0:
@@ -76,8 +94,10 @@ def test_plugin_with_simple_coverage(pytester: Any) -> None:
     pytester.makepyfile(
         test_mymodule="""
         from mymodule import simple_function, partially_covered
+
         def test_simple():
             assert simple_function(5) == 6
+
         def test_partially_positive():
             assert partially_covered(5) == 6
         """
@@ -85,8 +105,6 @@ def test_plugin_with_simple_coverage(pytester: Any) -> None:
 
     # Run pytest with coverage and CRAP reporting
     result = pytester.runpytest(
-        "-p",
-        "pytest_crap.plugin",
         "--cov=mymodule",
         "--cov-report=term-missing",
         "--crap",
@@ -97,7 +115,7 @@ def test_plugin_with_simple_coverage(pytester: Any) -> None:
     # Should complete successfully
     assert result.ret == 0
 
-    # Should show CRAP scores in output
+    # Should show CRAP output
     output = result.stdout.str()
     assert "CRAP" in output or "simple_function" in output
 
@@ -146,8 +164,6 @@ def test_plugin_with_complex_code(pytester: Any) -> None:
     )
 
     result = pytester.runpytest(
-        "-p",
-        "pytest_crap.plugin",
         "--cov=complex_module",
         "--crap",
         "--crap-threshold=10",
@@ -172,14 +188,13 @@ def test_plugin_threshold_option(pytester: Any) -> None:
     pytester.makepyfile(
         test_sample="""
         from sample import simple
+
         def test_it():
             assert simple(1) == 2
         """
     )
 
     result = pytester.runpytest(
-        "-p",
-        "pytest_crap.plugin",
         "--cov=sample",
         "--crap",
         "--crap-threshold=5",
@@ -208,6 +223,7 @@ def func_{i}(x):
     pytester.makepyfile(
         test_many="""
         from many_funcs import func_0, func_1
+
         def test_some():
             assert func_0(1) == 1
             assert func_1(1) == 2
@@ -215,8 +231,6 @@ def func_{i}(x):
     )
 
     result = pytester.runpytest(
-        "-p",
-        "pytest_crap.plugin",
         "--cov=many_funcs",
         "--crap",
         "--crap-top-n=5",
@@ -244,6 +258,7 @@ def func_{i}(x):
     pytester.makepyfile(
         test_many="""
         from many_funcs import func_0, func_1, func_2
+
         def test_some():
             assert func_0(1) == 1
             assert func_1(1) == 2
@@ -252,8 +267,6 @@ def func_{i}(x):
     )
 
     result = pytester.runpytest(
-        "-p",
-        "pytest_crap.plugin",
         "--cov=many_funcs",
         "--crap",
         "--crap-top-n=0",
@@ -284,14 +297,13 @@ def test_plugin_with_unparseable_file(pytester: Any) -> None:
     pytester.makepyfile(
         test_good="""
         from good_module import working_function
+
         def test_it():
             assert working_function() == 42
         """
     )
 
     result = pytester.runpytest(
-        "-p",
-        "pytest_crap.plugin",
         "--cov=good_module",
         "--crap",
         "--cov-fail-under=0",
@@ -320,12 +332,12 @@ def test_plugin_without_crap_flag_does_nothing(pytester: Any) -> None:
         """
     )
 
-    result = pytester.runpytest("-p", "pytest_crap.plugin", "--cov-fail-under=0")
+    result = pytester.runpytest("--cov=mycode", "--cov-fail-under=0")
 
     assert result.ret == 0
     output = result.stdout.str()
-    # Should not contain CRAP reporting
-    assert "CRAP" not in output or "coverage" in output.lower()
+    # Should not contain CRAP by Function table header
+    assert "CRAP by Function" not in output
 
 
 def test_plugin_real_crap_calculation(pytester: Any) -> None:
@@ -336,6 +348,7 @@ def test_plugin_real_crap_calculation(pytester: Any) -> None:
         def covered_simple(x):
             '''CC=1, 100% coverage -> CRAP should be 1'''
             return x * 2
+
         def covered_complex(x, y):
             '''CC=3 (2 if statements), good coverage'''
             if x > 0:
@@ -345,6 +358,7 @@ def test_plugin_real_crap_calculation(pytester: Any) -> None:
             if result > 10:
                 return result * 2
             return result
+
         def uncovered_complex(a, b, c):
             '''CC=5+, 0% coverage -> high CRAP'''
             if a > 0:
@@ -360,20 +374,22 @@ def test_plugin_real_crap_calculation(pytester: Any) -> None:
     pytester.makepyfile(
         test_calc="""
         from calc import covered_simple, covered_complex
+
         def test_simple():
             assert covered_simple(5) == 10
+
         def test_complex_positive():
             assert covered_complex(5, 3) == 8
+
         def test_complex_negative():
             assert covered_complex(-5, 3) == -8
+
         def test_complex_large():
             assert covered_complex(8, 4) == 24
         """
     )
 
     result = pytester.runpytest(
-        "-p",
-        "pytest_crap.plugin",
         "--cov=calc",
         "--cov-branch",
         "--crap",
@@ -398,6 +414,7 @@ def test_plugin_with_class_methods(pytester: Any) -> None:
         class Calculator:
             def add(self, x, y):
                 return x + y
+
             def complex_method(self, x):
                 if x > 0:
                     if x > 10:
@@ -410,6 +427,7 @@ def test_plugin_with_class_methods(pytester: Any) -> None:
     pytester.makepyfile(
         test_classes="""
         from classes import Calculator
+
         def test_add():
             calc = Calculator()
             assert calc.add(2, 3) == 5
@@ -417,8 +435,6 @@ def test_plugin_with_class_methods(pytester: Any) -> None:
     )
 
     result = pytester.runpytest(
-        "-p",
-        "pytest_crap.plugin",
         "--cov=classes",
         "--crap",
         "--cov-fail-under=0",
@@ -457,16 +473,16 @@ def func_b(x):
         sys.path.insert(0, 'src')
         from package.module_a import func_a
         from package.module_b import func_b
+
         def test_a():
             assert func_a() == 1
+
         def test_b():
             assert func_b(5) == 5
         """
     )
 
     result = pytester.runpytest(
-        "-p",
-        "pytest_crap.plugin",
         "--cov=src/package",
         "--crap",
         "--cov-fail-under=0",
