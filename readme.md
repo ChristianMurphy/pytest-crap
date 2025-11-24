@@ -127,7 +127,7 @@ Add to your CI pipeline to track CRAP scores. Example GitHub Actions step:
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
+See [contributing.md](./contributing.md) for development setup and guidelines.
 
 ## License
 
