@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+## [0.2.0] - 2025-11-25
+
 - Support for Python 3.10 through 3.14
 
 ## [0.1.0] - 2025-11-25
@@ -35,5 +37,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Usage examples
   - CI/CD integration examples
 
-[Unreleased]: https://github.com/ChristianMurphy/pytest-crap/compare/v0.1.0-beta...HEAD
+[Unreleased]: https://github.com/ChristianMurphy/pytest-crap/compare/v0.1.0...HEAD
+[0.2.0]: https://github.com/ChristianMurphy/pytest-crap/releases/tag/v0.2.0
 [0.1.0]: https://github.com/ChristianMurphy/pytest-crap/releases/tag/v0.1.0
