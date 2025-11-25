@@ -56,3 +56,24 @@ def test_file_and_folder_summary(monkeypatch: Any) -> None:
     assert "CRAP by File" in out
     assert "CRAP by Folder" in out
     assert "pkg/f1.py" in out or "pkg/sub/f2.py" in out
+
+
+def test_render_with_no_limit(monkeypatch: Any) -> None:
+    """Test rendering without top_n limit (0 or None)."""
+    reporter = CrapReporter()
+    console = Console(record=True)
+    monkeypatch.setattr(reporter, "console", console)
+
+    scores = [
+        make_score("a", "pkg/f1.py", 10.0, 1, 90.0),
+        make_score("b", "pkg/f1.py", 35.0, 5, 0.0),
+        make_score("c", "pkg/sub/f2.py", 40.0, 7, 10.0),
+    ]
+
+    # Test with top_n=0 to hit the other branch
+    reporter.render_function_table(scores, top_n=0)
+    reporter.render_file_summary(scores, top_n=0, threshold=30.0)
+    reporter.render_folder_summary(scores, top_n=0, threshold=30.0)
+
+    out = console.export_text()
+    assert "CRAP by Function" in out
