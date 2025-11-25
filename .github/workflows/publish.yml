@@ -17,6 +17,7 @@ on:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     environment: ${{ github.event_name == 'release' && 'pypi' || inputs.target }}
     permissions:
       id-token: write

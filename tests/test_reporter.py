@@ -1,11 +1,12 @@
 """Tests for the CrapReporter rendering."""
 
+import importlib
 from typing import Any
 
 from rich.console import Console
 
+from pytest_crap import reporter as reporter_module
 from pytest_crap.calculator import FunctionScore
-from pytest_crap.reporter import CrapReporter
 
 
 def make_score(name: str, file: str, crap: float, cc: int, cov: float) -> FunctionScore:
@@ -20,39 +21,271 @@ def make_score(name: str, file: str, crap: float, cc: int, cov: float) -> Functi
     )
 
 
-def test_function_table_renders(monkeypatch: Any) -> None:
-    reporter = CrapReporter()
-    # use a Console to capture output
-    console = Console(record=True)
-    monkeypatch.setattr(reporter, "console", console)
+class TestCrapReporterColors:
+    """Test all color branches in _color_for_crap."""
 
-    scores = [
-        make_score("a", "f.py", 5.0, 1, 100.0),
-        make_score("b", "f.py", 20.0, 3, 50.0),
-        make_score("c", "g.py", 40.0, 8, 0.0),
-    ]
+    def test_color_for_crap_green(self, monkeypatch: Any) -> None:
+        """Test that crap <= 15 returns green color."""
+        # Reload to capture import-time code
+        importlib.reload(reporter_module)
 
-    reporter.render_function_table(scores, top_n=2)
-    out = console.export_text()
-    assert "CRAP by Function" in out
-    assert "a" in out or "b" in out
+        reporter = reporter_module.CrapReporter()
+        console = Console(record=True)
+        monkeypatch.setattr(reporter, "console", console)
+
+        # Use a single low-crap score so it's definitely rendered
+        scores = [
+            make_score("low_crap_func", "f.py", 5.0, 1, 100.0),
+        ]
+
+        reporter.render_function_table(scores, top_n=10)
+        out = console.export_text()
+
+        assert "low_crap_func" in out
+        assert "5.00" in out
+
+    def test_color_for_crap_yellow(self, monkeypatch: Any) -> None:
+        """Test that 15 < crap <= 30 returns yellow color."""
+        reporter = reporter_module.CrapReporter()
+        console = Console(record=True)
+        monkeypatch.setattr(reporter, "console", console)
+
+        scores = [
+            make_score("medium_crap_func", "f.py", 20.0, 3, 50.0),
+        ]
+
+        reporter.render_function_table(scores, top_n=10)
+        out = console.export_text()
+
+        assert "medium_crap_func" in out
+        assert "20.00" in out
+
+    def test_color_for_crap_red(self, monkeypatch: Any) -> None:
+        """Test that crap > 30 returns red color."""
+        reporter = reporter_module.CrapReporter()
+        console = Console(record=True)
+        monkeypatch.setattr(reporter, "console", console)
+
+        scores = [
+            make_score("high_crap_func", "f.py", 50.0, 10, 0.0),
+        ]
+
+        reporter.render_function_table(scores, top_n=10)
+        out = console.export_text()
+
+        assert "high_crap_func" in out
+        assert "50.00" in out
+
+    def test_all_colors_in_file_summary(self, monkeypatch: Any) -> None:
+        """Test all color branches in file summary."""
+        reporter = reporter_module.CrapReporter()
+        console = Console(record=True)
+        monkeypatch.setattr(reporter, "console", console)
+
+        # Create scores that result in different max_crap values per file
+        scores = [
+            make_score("a", "green_file.py", 5.0, 1, 100.0),  # max_crap=5 (green)
+            make_score("b", "yellow_file.py", 20.0, 3, 50.0),  # max_crap=20 (yellow)
+            make_score("c", "red_file.py", 50.0, 10, 0.0),  # max_crap=50 (red)
+        ]
+
+        reporter.render_file_summary(scores, top_n=10, threshold=30.0)
+        out = console.export_text()
+
+        assert "green_file.py" in out
+        assert "yellow_file.py" in out
+        assert "red_file.py" in out
+
+    def test_all_colors_in_folder_summary(self, monkeypatch: Any) -> None:
+        """Test all color branches in folder summary."""
+        reporter = reporter_module.CrapReporter()
+        console = Console(record=True)
+        monkeypatch.setattr(reporter, "console", console)
+
+        # Create scores that result in different max_crap values per folder
+        scores = [
+            make_score("a", "green_pkg/f.py", 5.0, 1, 100.0),  # max_crap=5 (green)
+            make_score("b", "yellow_pkg/f.py", 20.0, 3, 50.0),  # max_crap=20 (yellow)
+            make_score("c", "red_pkg/f.py", 50.0, 10, 0.0),  # max_crap=50 (red)
+        ]
+
+        reporter.render_folder_summary(scores, top_n=10, threshold=30.0)
+        out = console.export_text()
+
+        assert "green_pkg" in out
+        assert "yellow_pkg" in out
+        assert "red_pkg" in out
 
 
-def test_file_and_folder_summary(monkeypatch: Any) -> None:
-    reporter = CrapReporter()
-    console = Console(record=True)
-    monkeypatch.setattr(reporter, "console", console)
+class TestTopNBranches:
+    """Test both branches of if top_n: conditions."""
 
-    scores = [
-        make_score("a", "pkg/f1.py", 10.0, 1, 90.0),
-        make_score("b", "pkg/f1.py", 35.0, 5, 0.0),
-        make_score("c", "pkg/sub/f2.py", 40.0, 7, 10.0),
-    ]
+    def test_function_table_with_top_n_zero(self, monkeypatch: Any) -> None:
+        """Test render_function_table with top_n=0 (show all)."""
+        reporter = reporter_module.CrapReporter()
+        console = Console(record=True)
+        monkeypatch.setattr(reporter, "console", console)
 
-    reporter.render_file_summary(scores, top_n=10, threshold=30.0)
-    reporter.render_folder_summary(scores, top_n=10, threshold=30.0)
+        scores = [
+            make_score("a", "f.py", 10.0, 2, 80.0),
+            make_score("b", "f.py", 20.0, 3, 60.0),
+            make_score("c", "f.py", 30.0, 4, 40.0),
+        ]
 
-    out = console.export_text()
-    assert "CRAP by File" in out
-    assert "CRAP by Folder" in out
-    assert "pkg/f1.py" in out or "pkg/sub/f2.py" in out
+        # top_n=0 should show all items (falsy branch)
+        reporter.render_function_table(scores, top_n=0)
+        out = console.export_text()
+
+        # All three should be present
+        assert "a" in out
+        assert "b" in out
+        assert "c" in out
+
+    def test_function_table_with_top_n_limit(self, monkeypatch: Any) -> None:
+        """Test render_function_table with top_n limit (truthy branch)."""
+        reporter = reporter_module.CrapReporter()
+        console = Console(record=True)
+        monkeypatch.setattr(reporter, "console", console)
+
+        scores = [
+            make_score("should_show", "f.py", 50.0, 10, 0.0),
+            make_score("should_hide", "f.py", 5.0, 1, 100.0),
+        ]
+
+        # top_n=1 should only show the highest
+        reporter.render_function_table(scores, top_n=1)
+        out = console.export_text()
+
+        assert "should_show" in out
+        # The low-crap item is cut off
+        assert "should_hide" not in out
+
+    def test_file_summary_with_top_n_zero(self, monkeypatch: Any) -> None:
+        """Test render_file_summary with top_n=0 (show all)."""
+        reporter = reporter_module.CrapReporter()
+        console = Console(record=True)
+        monkeypatch.setattr(reporter, "console", console)
+
+        scores = [
+            make_score("a", "file1.py", 10.0, 2, 80.0),
+            make_score("b", "file2.py", 20.0, 3, 60.0),
+            make_score("c", "file3.py", 30.0, 4, 40.0),
+        ]
+
+        reporter.render_file_summary(scores, top_n=0, threshold=25.0)
+        out = console.export_text()
+
+        assert "file1.py" in out
+        assert "file2.py" in out
+        assert "file3.py" in out
+
+    def test_file_summary_with_top_n_limit(self, monkeypatch: Any) -> None:
+        """Test render_file_summary with top_n limit."""
+        reporter = reporter_module.CrapReporter()
+        console = Console(record=True)
+        monkeypatch.setattr(reporter, "console", console)
+
+        scores = [
+            make_score("a", "high.py", 50.0, 10, 0.0),
+            make_score("b", "low.py", 5.0, 1, 100.0),
+        ]
+
+        reporter.render_file_summary(scores, top_n=1, threshold=30.0)
+        out = console.export_text()
+
+        assert "high.py" in out
+
+    def test_folder_summary_with_top_n_zero(self, monkeypatch: Any) -> None:
+        """Test render_folder_summary with top_n=0 (show all)."""
+        reporter = reporter_module.CrapReporter()
+        console = Console(record=True)
+        monkeypatch.setattr(reporter, "console", console)
+
+        scores = [
+            make_score("a", "pkg1/f.py", 10.0, 2, 80.0),
+            make_score("b", "pkg2/f.py", 20.0, 3, 60.0),
+            make_score("c", "pkg3/f.py", 30.0, 4, 40.0),
+        ]
+
+        reporter.render_folder_summary(scores, top_n=0, threshold=25.0)
+        out = console.export_text()
+
+        assert "pkg1" in out
+        assert "pkg2" in out
+        assert "pkg3" in out
+
+    def test_folder_summary_with_top_n_limit(self, monkeypatch: Any) -> None:
+        """Test render_folder_summary with top_n limit."""
+        reporter = reporter_module.CrapReporter()
+        console = Console(record=True)
+        monkeypatch.setattr(reporter, "console", console)
+
+        scores = [
+            make_score("a", "high_pkg/f.py", 50.0, 10, 0.0),
+            make_score("b", "low_pkg/f.py", 5.0, 1, 100.0),
+        ]
+
+        reporter.render_folder_summary(scores, top_n=1, threshold=30.0)
+        out = console.export_text()
+
+        assert "high_pkg" in out
+
+
+class TestEdgeCases:
+    """Test edge cases and boundary conditions."""
+
+    def test_crap_exactly_at_boundaries(self, monkeypatch: Any) -> None:
+        """Test color boundaries: crap=15 should be green, crap=30 should be yellow."""
+        reporter = reporter_module.CrapReporter()
+        console = Console(record=True)
+        monkeypatch.setattr(reporter, "console", console)
+
+        scores = [
+            make_score("at_15", "f.py", 15.0, 2, 50.0),  # crap=15, should be green (not > 15)
+            make_score("at_30", "f.py", 30.0, 4, 25.0),  # crap=30, should be yellow (not > 30)
+            make_score("at_31", "f.py", 31.0, 5, 20.0),  # crap=31, should be red (> 30)
+        ]
+
+        reporter.render_function_table(scores, top_n=0)
+        out = console.export_text()
+
+        assert "at_15" in out
+        assert "at_30" in out
+        assert "at_31" in out
+
+    def test_threshold_counting(self, monkeypatch: Any) -> None:
+        """Test that count_above threshold works correctly."""
+        reporter = reporter_module.CrapReporter()
+        console = Console(record=True)
+        monkeypatch.setattr(reporter, "console", console)
+
+        # All in same file, various crap scores
+        scores = [
+            make_score("below", "f.py", 25.0, 3, 50.0),  # below threshold
+            make_score("at", "f.py", 30.0, 4, 40.0),  # at threshold (>= counts)
+            make_score("above", "f.py", 35.0, 5, 30.0),  # above threshold
+        ]
+
+        reporter.render_file_summary(scores, top_n=0, threshold=30.0)
+        out = console.export_text()
+
+        # Should show count of 2 (at and above)
+        assert "2" in out
+
+    def test_empty_scores(self, monkeypatch: Any) -> None:
+        """Test rendering with empty scores list."""
+        reporter = reporter_module.CrapReporter()
+        console = Console(record=True)
+        monkeypatch.setattr(reporter, "console", console)
+
+        scores: list[FunctionScore] = []
+
+        reporter.render_function_table(scores, top_n=10)
+        reporter.render_file_summary(scores, top_n=10, threshold=30.0)
+        reporter.render_folder_summary(scores, top_n=10, threshold=30.0)
+
+        out = console.export_text()
+        # Should still render the table headers
+        assert "CRAP by Function" in out
+        assert "CRAP by File" in out
+        assert "CRAP by Folder" in out

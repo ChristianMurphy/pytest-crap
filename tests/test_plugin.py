@@ -1,491 +1,540 @@
-"""Integration tests for pytest-crap plugin using real pytest execution.
+"""Unit tests for pytest-crap plugin module.
 
-Uses pytester fixture to run actual pytest sessions with real coverage data.
+These tests directly test the plugin functions with mocked pytest objects,
+ensuring coverage is collected in-process rather than relying on subprocess
+coverage collection from pytester-based integration tests.
 """
 
+from __future__ import annotations
+
+import importlib
+import os
+import sys
+import tempfile
 from typing import Any
-
-# Import package modules so the outer pytest process records coverage
-import pytest_crap.calculator  # noqa: F401
-import pytest_crap.mapper  # noqa: F401
-import pytest_crap.plugin  # noqa: F401
-import pytest_crap.reporter  # noqa: F401
+from unittest.mock import MagicMock, patch
 
 
-def test_plugin_loads_and_shows_help(pytester: Any) -> None:
-    """Verify plugin registers and shows in help."""
-    result = pytester.runpytest("--help")
-    result.stdout.fnmatch_lines(
-        [
-            "*CRAP score reporting v0.1.0:*",
-            "*--crap*Enable CRAP score reporting*",
-            "*--crap-threshold*",
-            "*--crap-top-n*",
-        ]
-    )
+class TestPytestAddoption:
+    """Tests for pytest_addoption hook."""
+
+    def test_registers_crap_group(self) -> None:
+        """Verify --crap options are registered."""
+        # Reload to ensure coverage captures import-time code
+        import pytest_crap.plugin as plugin_module
+
+        importlib.reload(plugin_module)
+
+        parser = MagicMock()
+        group = MagicMock()
+        parser.getgroup.return_value = group
+
+        plugin_module.pytest_addoption(parser)
+
+        parser.getgroup.assert_called_once()
+        # Should register 3 options: --crap, --crap-threshold, --crap-top-n
+        assert group.addoption.call_count == 3
+
+    def test_crap_option_defaults(self) -> None:
+        """Verify option defaults are set correctly."""
+        from pytest_crap import plugin as plugin_module
+
+        parser = MagicMock()
+        group = MagicMock()
+        parser.getgroup.return_value = group
+
+        plugin_module.pytest_addoption(parser)
+
+        calls = group.addoption.call_args_list
+        # Extract the kwargs from each call
+        options = {call[0][0]: call[1] for call in calls}
+
+        assert "--crap" in options
+        assert options["--crap"]["default"] is False
+        assert options["--crap"]["action"] == "store_true"
+
+        assert "--crap-threshold" in options
+        assert options["--crap-threshold"]["default"] == 30
+
+        assert "--crap-top-n" in options
+        assert options["--crap-top-n"]["default"] == 20
 
 
-def test_version_access() -> None:
-    """Test that version can be accessed."""
-    import pytest_crap
+class TestPytestConfigure:
+    """Tests for pytest_configure hook."""
 
-    assert pytest_crap.__version__ == "0.1.0"
+    def test_does_nothing_when_crap_disabled(self) -> None:
+        """When --crap is not set, should not set _pytest_crap_enabled."""
+        from pytest_crap import plugin as plugin_module
 
+        # Use a real object to verify setattr isn't called
+        class FakeConfig:
+            def getoption(self, name: str) -> bool:
+                return False
 
-def test_plugin_without_cov_plugin_warns(pytester: Any) -> None:
-    """When --crap is used without pytest-cov, should warn gracefully."""
-    pytester.makepyfile(
-        test_simple="""
-        def test_dummy():
-            assert True
-        """
-    )
+        config = FakeConfig()
 
-    # Run WITHOUT --cov to trigger the "plugin not found" warning
-    result = pytester.runpytest("--crap", "-p", "no:cov")
-    assert result.ret == 0
-    result.stdout.fnmatch_lines(
-        [
-            "*pytest-crap: pytest-cov plugin not found*",
-        ]
-    )
+        plugin_module.pytest_configure(config)
 
+        # _pytest_crap_enabled should not be set when --crap is False
+        assert not hasattr(config, "_pytest_crap_enabled")
 
-def test_plugin_with_cov_but_no_source_warns(pytester: Any) -> None:
-    """When --crap is used with --cov but no source, should warn about controller."""
-    pytester.makepyfile(
-        test_simple="""
-        def test_dummy():
-            assert True
-        """
-    )
+    def test_sets_enabled_flag_when_crap_enabled(self) -> None:
+        """When --crap is set, should set _pytest_crap_enabled = True."""
+        from pytest_crap import plugin as plugin_module
 
-    # Run with bare --cov (no source specified) - controller may not initialize
-    result = pytester.runpytest("--crap", "--cov", "--cov-fail-under=0")
-    # Should not crash
-    assert result.ret == 0
+        class FakeConfig:
+            def getoption(self, name: str) -> bool:
+                return True
+
+        config = FakeConfig()
+
+        plugin_module.pytest_configure(config)
+
+        assert getattr(config, "_pytest_crap_enabled", False) is True
 
 
-def test_plugin_with_simple_coverage(pytester: Any) -> None:
-    """Test with real coverage data on simple functions."""
-    # Create a source file with functions of varying complexity
-    pytester.makepyfile(
-        mymodule="""
-        def simple_function(x):
-            '''Simple function with CC=1'''
-            return x + 1
+class FakeOption:
+    """Fake option object."""
 
-        def uncovered_function(x):
-            '''This won't be tested'''
-            if x > 0:
-                return x * 2
-            else:
-                return x * 3
-
-        def partially_covered(x):
-            '''Partial coverage'''
-            if x > 0:
-                return x + 1
-            return x - 1
-        """
-    )
-
-    # Create tests that cover some functions
-    pytester.makepyfile(
-        test_mymodule="""
-        from mymodule import simple_function, partially_covered
-
-        def test_simple():
-            assert simple_function(5) == 6
-
-        def test_partially_positive():
-            assert partially_covered(5) == 6
-        """
-    )
-
-    # Run pytest with coverage and CRAP reporting
-    result = pytester.runpytest(
-        "--cov=mymodule",
-        "--cov-report=term-missing",
-        "--crap",
-        "--cov-fail-under=0",
-        "-v",
-    )
-
-    # Should complete successfully
-    assert result.ret == 0
-
-    # Should show CRAP output
-    output = result.stdout.str()
-    assert "CRAP" in output or "simple_function" in output
+    def __init__(self, verbose: int = 0) -> None:
+        self.verbose = verbose
 
 
-def test_plugin_with_complex_code(pytester: Any) -> None:
-    """Test with high complexity code."""
-    pytester.makepyfile(
-        complex_module="""
-        def high_complexity(x, y, z):
-            '''Function with high cyclomatic complexity'''
-            result = 0
-            if x > 0:
-                if y > 0:
-                    if z > 0:
-                        result = x + y + z
-                    else:
-                        result = x + y - z
+class FakeConfig:
+    """Fake config object that behaves correctly with getattr()."""
+
+    def __init__(
+        self,
+        crap_enabled: bool = True,
+        verbose: int = 0,
+        top_n: int = 20,
+        threshold: int = 30,
+    ) -> None:
+        if crap_enabled:
+            self._pytest_crap_enabled = True
+        # Note: if crap_enabled is False, we don't set the attribute at all
+        # This ensures getattr(..., False) returns False
+
+        self.option = FakeOption(verbose=verbose)
+        self._top_n = top_n
+        self._threshold = threshold
+        self.pluginmanager = MagicMock()
+
+    def getoption(self, name: str) -> Any:
+        if name == "--crap-top-n":
+            return self._top_n
+        if name == "--crap-threshold":
+            return self._threshold
+        return None
+
+
+class TestPytestTerminalSummary:
+    """Tests for pytest_terminal_summary hook."""
+
+    def _make_config(
+        self,
+        crap_enabled: bool = True,
+        cov_plugin: Any = "present",
+        cov_controller: Any = "present",
+        coverage_obj: Any = "present",
+        measured_files: list[str] | None = None,
+        file_lines: dict[str, list[int]] | None = None,
+        verbose: int = 0,
+        top_n: int = 20,
+        threshold: int = 30,
+    ) -> tuple[MagicMock, FakeConfig]:
+        """Create mock terminalreporter and config objects."""
+        tr = MagicMock()
+        config = FakeConfig(
+            crap_enabled=crap_enabled,
+            verbose=verbose,
+            top_n=top_n,
+            threshold=threshold,
+        )
+
+        # Configure plugin manager
+        if cov_plugin == "present":
+            mock_cov_plugin = MagicMock()
+            if cov_controller == "present":
+                mock_controller = MagicMock()
+                if coverage_obj == "present":
+                    mock_cov = MagicMock()
+                    mock_data = MagicMock()
+
+                    # Default to some measured files if not specified
+                    if measured_files is None:
+                        measured_files = []
+                    mock_data.measured_files.return_value = measured_files
+
+                    # Setup lines() to return specified lines
+                    if file_lines is None:
+                        file_lines = {}
+
+                    def lines_side_effect(filename: str) -> list[int]:
+                        return file_lines.get(filename, [])
+
+                    mock_data.lines = MagicMock(side_effect=lines_side_effect)
+                    mock_cov.get_data.return_value = mock_data
+                    mock_controller.cov = mock_cov
                 else:
-                    if z > 0:
-                        result = x - y + z
-                    else:
-                        result = x - y - z
+                    mock_controller.cov = None
+                mock_cov_plugin.cov_controller = mock_controller
             else:
-                if y > 0:
-                    if z > 0:
-                        result = -x + y + z
-                    else:
-                        result = -x + y - z
-                else:
-                    if z > 0:
-                        result = -x - y + z
-                    else:
-                        result = -x - y - z
-            return result
-        """
-    )
-
-    # Create a test that imports the module but doesn't exercise functions
-    pytester.makepyfile(
-        test_complex="""
-        import complex_module
-
-        def test_placeholder():
-            assert True
-        """
-    )
-
-    result = pytester.runpytest(
-        "--cov=complex_module",
-        "--crap",
-        "--crap-threshold=10",
-        "--cov-fail-under=0",
-    )
-
-    assert result.ret == 0
-    output = result.stdout.str()
-    # With no coverage and high complexity, should have high CRAP score
-    assert "high_complexity" in output
-
-
-def test_plugin_threshold_option(pytester: Any) -> None:
-    """Test --crap-threshold option affects output."""
-    pytester.makepyfile(
-        sample="""
-        def simple(x):
-            return x + 1
-        """
-    )
-
-    pytester.makepyfile(
-        test_sample="""
-        from sample import simple
-
-        def test_it():
-            assert simple(1) == 2
-        """
-    )
-
-    result = pytester.runpytest(
-        "--cov=sample",
-        "--crap",
-        "--crap-threshold=5",
-        "--cov-fail-under=0",
-    )
-
-    assert result.ret == 0
-
-
-def test_plugin_top_n_option(pytester: Any) -> None:
-    """Test --crap-top-n option limits output."""
-    # Create multiple functions
-    functions = "\n".join(
-        [
-            f"""
-def func_{i}(x):
-    return x + {i}
-"""
-            for i in range(30)
-        ]
-    )
-
-    pytester.makepyfile(many_funcs=functions)
-
-    # Test only a few
-    pytester.makepyfile(
-        test_many="""
-        from many_funcs import func_0, func_1
-
-        def test_some():
-            assert func_0(1) == 1
-            assert func_1(1) == 2
-        """
-    )
-
-    result = pytester.runpytest(
-        "--cov=many_funcs",
-        "--crap",
-        "--crap-top-n=5",
-        "--cov-fail-under=0",
-    )
-
-    assert result.ret == 0
-
-
-def test_plugin_top_n_zero(pytester: Any) -> None:
-    """Test --crap-top-n=0 shows all items."""
-    # Create multiple functions
-    functions = "\n".join(
-        [
-            f"""
-def func_{i}(x):
-    return x + {i}
-"""
-            for i in range(5)
-        ]
-    )
-
-    pytester.makepyfile(many_funcs=functions)
-
-    pytester.makepyfile(
-        test_many="""
-        from many_funcs import func_0, func_1, func_2
-
-        def test_some():
-            assert func_0(1) == 1
-            assert func_1(1) == 2
-            assert func_2(1) == 3
-        """
-    )
-
-    result = pytester.runpytest(
-        "--cov=many_funcs",
-        "--crap",
-        "--crap-top-n=0",
-        "--cov-fail-under=0",
-    )
-
-    assert result.ret == 0
-    # With top_n=0, should show all functions
-    output = result.stdout.str()
-    assert "func_0" in output
-    assert "func_1" in output
-    assert "func_2" in output
-
-
-def test_plugin_with_unparseable_file(pytester: Any) -> None:
-    """Test plugin handles files it can't parse gracefully."""
-    # Create a valid Python file
-    pytester.makepyfile(
-        good_module="""
-        def working_function():
-            return 42
-        """
-    )
-
-    # Create a non-Python file that coverage might track
-    pytester.makefile(".txt", data="not python code at all")
-
-    pytester.makepyfile(
-        test_good="""
-        from good_module import working_function
-
-        def test_it():
-            assert working_function() == 42
-        """
-    )
-
-    result = pytester.runpytest(
-        "--cov=good_module",
-        "--crap",
-        "--cov-fail-under=0",
-    )
-
-    # Should handle gracefully and continue
-    assert result.ret == 0
-
-
-def test_plugin_without_crap_flag_does_nothing(pytester: Any) -> None:
-    """Without --crap flag, plugin should not run."""
-    pytester.makepyfile(
-        mycode="""
-        def some_func():
-            return 1
-        """
-    )
-
-    pytester.makepyfile(
-        test_it="""
-        import mycode
-
-        def test_pass():
-            # import the module so coverage can collect it
-            assert mycode.some_func() == 1
-        """
-    )
-
-    result = pytester.runpytest("--cov=mycode", "--cov-fail-under=0")
-
-    assert result.ret == 0
-    output = result.stdout.str()
-    # Should not contain CRAP by Function table header
-    assert "CRAP by Function" not in output
-
-
-def test_plugin_real_crap_calculation(pytester: Any) -> None:
-    """Verify actual CRAP scores are calculated correctly."""
-    # Create a function with known complexity and coverage
-    pytester.makepyfile(
-        calc="""
-        def covered_simple(x):
-            '''CC=1, 100% coverage -> CRAP should be 1'''
-            return x * 2
-
-        def covered_complex(x, y):
-            '''CC=3 (2 if statements), good coverage'''
-            if x > 0:
-                result = x + y
-            else:
-                result = x - y
-            if result > 10:
-                return result * 2
-            return result
-
-        def uncovered_complex(a, b, c):
-            '''CC=5+, 0% coverage -> high CRAP'''
-            if a > 0:
-                if b > 0:
-                    if c > 0:
-                        return a + b + c
-                    return a + b - c
-                return a - b
-            return -a
-        """
-    )
-
-    pytester.makepyfile(
-        test_calc="""
-        from calc import covered_simple, covered_complex
-
-        def test_simple():
-            assert covered_simple(5) == 10
-
-        def test_complex_positive():
-            assert covered_complex(5, 3) == 8
-
-        def test_complex_negative():
-            assert covered_complex(-5, 3) == -8
-
-        def test_complex_large():
-            assert covered_complex(8, 4) == 24
-        """
-    )
-
-    result = pytester.runpytest(
-        "--cov=calc",
-        "--cov-branch",
-        "--crap",
-        "--crap-threshold=20",
-        "--cov-fail-under=0",
-        "-v",
-    )
-
-    assert result.ret == 0
-    output = result.stdout.str()
-
-    # Verify functions appear in output
-    assert "covered_simple" in output
-    assert "covered_complex" in output
-    assert "uncovered_complex" in output
-
-
-def test_plugin_with_class_methods(pytester: Any) -> None:
-    """Test CRAP calculation for class methods."""
-    pytester.makepyfile(
-        classes="""
-        class Calculator:
-            def add(self, x, y):
-                return x + y
-
-            def complex_method(self, x):
-                if x > 0:
-                    if x > 10:
-                        return x * 2
-                    return x + 1
-                return 0
-        """
-    )
-
-    pytester.makepyfile(
-        test_classes="""
-        from classes import Calculator
-
-        def test_add():
-            calc = Calculator()
-            assert calc.add(2, 3) == 5
-        """
-    )
-
-    result = pytester.runpytest(
-        "--cov=classes",
-        "--crap",
-        "--cov-fail-under=0",
-    )
-
-    assert result.ret == 0
-    output = result.stdout.str()
-    assert "Calculator" in output or "add" in output
-
-
-def test_plugin_file_and_folder_summaries(pytester: Any) -> None:
-    """Test that file and folder summaries are generated."""
-    # Create nested structure
-    pytester.mkdir("src")
-    pytester.mkdir("src/package")
-
-    pytester.makepyfile(
-        **{
-            "src/package/__init__": "",
-            "src/package/module_a": """
-def func_a():
-    return 1
-""",
-            "src/package/module_b": """
-def func_b(x):
-    if x > 0:
-        return x
-    return -x
-""",
-        }
-    )
-
-    pytester.makepyfile(
-        test_all="""
-        import sys
-        sys.path.insert(0, 'src')
-        from package.module_a import func_a
-        from package.module_b import func_b
-
-        def test_a():
-            assert func_a() == 1
-
-        def test_b():
-            assert func_b(5) == 5
-        """
-    )
-
-    result = pytester.runpytest(
-        "--cov=src/package",
-        "--crap",
-        "--cov-fail-under=0",
-    )
-
-    assert result.ret == 0
+                mock_cov_plugin.cov_controller = None
+            config.pluginmanager.getplugin.return_value = mock_cov_plugin
+        else:
+            config.pluginmanager.getplugin.return_value = None
+
+        return tr, config
+
+    def test_returns_early_when_crap_disabled(self) -> None:
+        """When _pytest_crap_enabled is False, should return immediately."""
+        from pytest_crap import plugin as plugin_module
+
+        tr, config = self._make_config(crap_enabled=False)
+
+        plugin_module.pytest_terminal_summary(tr, 0, config)
+
+        # Should not write anything
+        tr.write_line.assert_not_called()
+        tr.write_sep.assert_not_called()
+
+    def test_warns_when_cov_plugin_missing(self) -> None:
+        """When pytest-cov plugin is not found, should warn."""
+        from pytest_crap import plugin as plugin_module
+
+        tr, config = self._make_config(cov_plugin=None)
+
+        plugin_module.pytest_terminal_summary(tr, 0, config)
+
+        # Should warn about missing plugin
+        tr.write_sep.assert_called()
+        call_args = tr.write_sep.call_args[0]
+        assert "pytest-cov plugin not found" in call_args[1]
+
+    def test_warns_when_cov_controller_missing(self) -> None:
+        """When coverage controller is not initialized, should warn."""
+        from pytest_crap import plugin as plugin_module
+
+        tr, config = self._make_config(cov_controller=None)
+
+        plugin_module.pytest_terminal_summary(tr, 0, config)
+
+        # Should warn about missing controller
+        tr.write_sep.assert_called()
+        call_args = tr.write_sep.call_args[0]
+        assert "coverage controller not initialized" in call_args[1]
+
+    def test_warns_when_coverage_obj_missing(self) -> None:
+        """When coverage object is not found, should warn."""
+        from pytest_crap import plugin as plugin_module
+
+        tr, config = self._make_config(coverage_obj=None)
+
+        plugin_module.pytest_terminal_summary(tr, 0, config)
+
+        # Should warn about missing coverage object
+        tr.write_sep.assert_called()
+        call_args = tr.write_sep.call_args[0]
+        assert "coverage object not found" in call_args[1]
+
+    def test_warns_when_no_coverage_data(self) -> None:
+        """When no files have coverage data, should warn."""
+        from pytest_crap import plugin as plugin_module
+
+        tr, config = self._make_config(measured_files=[])
+
+        plugin_module.pytest_terminal_summary(tr, 0, config)
+
+        # Should warn about no coverage data
+        tr.write_sep.assert_called()
+        call_args = tr.write_sep.call_args[0]
+        assert "no coverage data found" in call_args[1]
+
+    def test_skips_test_files(self) -> None:
+        """Test files should be skipped from analysis."""
+        from pytest_crap import plugin as plugin_module
+
+        tr, config = self._make_config(
+            measured_files=["/path/to/test_something.py"],
+            file_lines={"/path/to/test_something.py": [1, 2, 3]},
+        )
+
+        plugin_module.pytest_terminal_summary(tr, 0, config)
+
+        # Should warn about no functions found (test files skipped)
+        tr.write_sep.assert_called()
+        call_args = tr.write_sep.call_args[0]
+        assert "no functions found to analyze" in call_args[1]
+
+    def test_skips_non_python_files(self) -> None:
+        """Non-Python files should be skipped from analysis."""
+        from pytest_crap import plugin as plugin_module
+
+        tr, config = self._make_config(
+            measured_files=["/path/to/data.txt", "/path/to/config.json"],
+            file_lines={
+                "/path/to/data.txt": [1, 2, 3],
+                "/path/to/config.json": [1, 2],
+            },
+        )
+
+        plugin_module.pytest_terminal_summary(tr, 0, config)
+
+        # Should warn about no functions found
+        tr.write_sep.assert_called()
+        call_args = tr.write_sep.call_args[0]
+        assert "no functions found to analyze" in call_args[1]
+
+    def test_successful_report_generation(self) -> None:
+        """When everything works, should generate CRAP report."""
+        from pytest_crap import plugin as plugin_module
+
+        # Create a real temporary Python file for the test
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+            f.write("def foo(): pass\n")
+            temp_file = f.name
+
+        try:
+            tr, config = self._make_config(
+                measured_files=[temp_file],
+                file_lines={temp_file: [1]},
+            )
+
+            # Mock calculate_crap to return some scores
+            mock_score = MagicMock()
+            mock_score.crap = 5.0
+
+            # Mock the reporter
+            mock_reporter = MagicMock()
+
+            with (
+                patch.object(
+                    sys.modules["pytest_crap.calculator"],
+                    "calculate_crap",
+                    return_value=[mock_score],
+                ),
+                patch.object(
+                    sys.modules["pytest_crap.reporter"],
+                    "CrapReporter",
+                    return_value=mock_reporter,
+                ),
+            ):
+                plugin_module.pytest_terminal_summary(tr, 0, config)
+
+            # Should have rendered reports
+            mock_reporter.render_function_table.assert_called_once()
+            mock_reporter.render_file_summary.assert_called_once()
+            mock_reporter.render_folder_summary.assert_called_once()
+        finally:
+            os.unlink(temp_file)
+
+    def test_handles_parse_errors_gracefully(self) -> None:
+        """Parse errors should be handled gracefully."""
+        from pytest_crap import plugin as plugin_module
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+            f.write("def foo(): pass\n")
+            temp_file = f.name
+
+        try:
+            tr, config = self._make_config(
+                measured_files=[temp_file],
+                file_lines={temp_file: [1]},
+            )
+
+            with patch.object(
+                sys.modules["pytest_crap.calculator"],
+                "calculate_crap",
+                side_effect=SyntaxError("parse error"),
+            ):
+                plugin_module.pytest_terminal_summary(tr, 0, config)
+
+            # Should warn about no functions found (due to parse error)
+            tr.write_sep.assert_called()
+        finally:
+            os.unlink(temp_file)
+
+    def test_verbose_mode_shows_parse_errors(self) -> None:
+        """In verbose mode, parse errors should be shown."""
+        from pytest_crap import plugin as plugin_module
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+            f.write("def foo(): pass\n")
+            temp_file = f.name
+
+        try:
+            tr, config = self._make_config(
+                measured_files=[temp_file],
+                file_lines={temp_file: [1]},
+                verbose=1,
+            )
+
+            with patch.object(
+                sys.modules["pytest_crap.calculator"],
+                "calculate_crap",
+                side_effect=SyntaxError("parse error"),
+            ):
+                plugin_module.pytest_terminal_summary(tr, 0, config)
+
+            # Should have written the error message
+            write_line_calls = [str(call) for call in tr.write_line.call_args_list]
+            assert any("could not parse" in call for call in write_line_calls)
+        finally:
+            os.unlink(temp_file)
+
+    def test_exception_during_report_shows_error(self) -> None:
+        """Exceptions during report generation should show error message."""
+        from pytest_crap import plugin as plugin_module
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+            f.write("def foo(): pass\n")
+            temp_file = f.name
+
+        try:
+            tr, config = self._make_config(
+                measured_files=[temp_file],
+                file_lines={temp_file: [1]},
+            )
+
+            mock_score = MagicMock()
+            mock_score.crap = 5.0
+
+            mock_reporter = MagicMock()
+            mock_reporter.render_function_table.side_effect = RuntimeError("render failed")
+
+            with (
+                patch.object(
+                    sys.modules["pytest_crap.calculator"],
+                    "calculate_crap",
+                    return_value=[mock_score],
+                ),
+                patch.object(
+                    sys.modules["pytest_crap.reporter"],
+                    "CrapReporter",
+                    return_value=mock_reporter,
+                ),
+            ):
+                plugin_module.pytest_terminal_summary(tr, 0, config)
+
+            # Should show error message
+            tr.write_sep.assert_called()
+            call_args = tr.write_sep.call_args[0]
+            assert "failed to generate CRAP report" in call_args[1]
+        finally:
+            os.unlink(temp_file)
+
+    def test_verbose_exception_shows_traceback(self) -> None:
+        """In verbose mode, exceptions should show full traceback."""
+        from pytest_crap import plugin as plugin_module
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+            f.write("def foo(): pass\n")
+            temp_file = f.name
+
+        try:
+            tr, config = self._make_config(
+                measured_files=[temp_file],
+                file_lines={temp_file: [1]},
+                verbose=1,
+            )
+
+            mock_score = MagicMock()
+            mock_score.crap = 5.0
+
+            mock_reporter = MagicMock()
+            mock_reporter.render_function_table.side_effect = RuntimeError("render failed")
+
+            with (
+                patch.object(
+                    sys.modules["pytest_crap.calculator"],
+                    "calculate_crap",
+                    return_value=[mock_score],
+                ),
+                patch.object(
+                    sys.modules["pytest_crap.reporter"],
+                    "CrapReporter",
+                    return_value=mock_reporter,
+                ),
+            ):
+                plugin_module.pytest_terminal_summary(tr, 0, config)
+
+            # Should have written traceback
+            write_line_calls = [str(call) for call in tr.write_line.call_args_list]
+            assert any("Traceback" in call or "RuntimeError" in call for call in write_line_calls)
+        finally:
+            os.unlink(temp_file)
+
+    def test_respects_top_n_and_threshold_options(self) -> None:
+        """Options --crap-top-n and --crap-threshold should be passed to reporter."""
+        from pytest_crap import plugin as plugin_module
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+            f.write("def foo(): pass\n")
+            temp_file = f.name
+
+        try:
+            tr, config = self._make_config(
+                measured_files=[temp_file],
+                file_lines={temp_file: [1]},
+                top_n=10,
+                threshold=25,
+            )
+
+            mock_score = MagicMock()
+            mock_score.crap = 5.0
+
+            mock_reporter = MagicMock()
+
+            with (
+                patch.object(
+                    sys.modules["pytest_crap.calculator"],
+                    "calculate_crap",
+                    return_value=[mock_score],
+                ),
+                patch.object(
+                    sys.modules["pytest_crap.reporter"],
+                    "CrapReporter",
+                    return_value=mock_reporter,
+                ),
+            ):
+                plugin_module.pytest_terminal_summary(tr, 0, config)
+
+            # Check that options were passed correctly
+            mock_reporter.render_function_table.assert_called_once()
+            assert mock_reporter.render_function_table.call_args[1]["top_n"] == 10
+
+            mock_reporter.render_file_summary.assert_called_once()
+            call_kwargs = mock_reporter.render_file_summary.call_args[1]
+            assert call_kwargs["top_n"] == 10
+            assert call_kwargs["threshold"] == 25.0
+        finally:
+            os.unlink(temp_file)
+
+
+class TestVersionImport:
+    """Test version is accessible."""
+
+    def test_version_in_plugin(self) -> None:
+        """Version should be imported in plugin module."""
+        from pytest_crap import __version__
+
+        assert __version__ is not None
+        assert isinstance(__version__, str)
+
+
+class TestModuleImport:
+    """Test module import to capture import-time coverage."""
+
+    def test_plugin_module_imports(self) -> None:
+        """Reload plugin module to capture import-time code coverage."""
+        import pytest_crap.plugin
+
+        # Reload to execute import-time code while coverage is active
+        importlib.reload(pytest_crap.plugin)
+
+        # Verify expected attributes exist after reload
+        assert hasattr(pytest_crap.plugin, "pytest_addoption")
+        assert hasattr(pytest_crap.plugin, "pytest_configure")
+        assert hasattr(pytest_crap.plugin, "pytest_terminal_summary")

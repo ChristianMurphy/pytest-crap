@@ -51,7 +51,7 @@ poetry add pytest-crap
 
 ## Requirements
 
-- Python 3.13+
+- Python 3.10+
 - pytest 7.0+
 - pytest-cov (for coverage data)
 
