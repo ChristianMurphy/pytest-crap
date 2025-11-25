@@ -6,7 +6,7 @@ Thank you for your interest in contributing! This guide will help you get set up
 
 ### Prerequisites
 
-- Python 3.13+
+- Python 3.10+
 - [Poetry](https://python-poetry.org/docs/#installation) for dependency management
 
 ### Installation
