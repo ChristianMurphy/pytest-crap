@@ -1,5 +1,9 @@
 # pytest-crap
 
+[![Test](https://github.com/ChristianMurphy/pytest-crap/actions/workflows/test.yml/badge.svg)](https://github.com/ChristianMurphy/pytest-crap/actions/workflows/test.yml)
+[![PyPI - Version](https://img.shields.io/pypi/v/pytest-crap)](https://pypi.org/project/pytest-crap/)
+
+
 A pytest plugin that calculates CRAP scores and displays prioritized lists of high-risk functions to guide test writing.
 
 ## What is CRAP?
