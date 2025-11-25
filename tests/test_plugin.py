@@ -7,10 +7,12 @@ coverage collection from pytester-based integration tests.
 
 from __future__ import annotations
 
+import importlib
+import os
+import sys
+import tempfile
 from typing import Any
 from unittest.mock import MagicMock, patch
-
-from pytest_crap import plugin
 
 
 class TestPytestAddoption:
@@ -18,11 +20,16 @@ class TestPytestAddoption:
 
     def test_registers_crap_group(self) -> None:
         """Verify --crap options are registered."""
+        # Reload to ensure coverage captures import-time code
+        import pytest_crap.plugin as plugin_module
+
+        importlib.reload(plugin_module)
+
         parser = MagicMock()
         group = MagicMock()
         parser.getgroup.return_value = group
 
-        plugin.pytest_addoption(parser)
+        plugin_module.pytest_addoption(parser)
 
         parser.getgroup.assert_called_once()
         # Should register 3 options: --crap, --crap-threshold, --crap-top-n
@@ -30,11 +37,13 @@ class TestPytestAddoption:
 
     def test_crap_option_defaults(self) -> None:
         """Verify option defaults are set correctly."""
+        from pytest_crap import plugin as plugin_module
+
         parser = MagicMock()
         group = MagicMock()
         parser.getgroup.return_value = group
 
-        plugin.pytest_addoption(parser)
+        plugin_module.pytest_addoption(parser)
 
         calls = group.addoption.call_args_list
         # Extract the kwargs from each call
@@ -56,6 +65,7 @@ class TestPytestConfigure:
 
     def test_does_nothing_when_crap_disabled(self) -> None:
         """When --crap is not set, should not set _pytest_crap_enabled."""
+        from pytest_crap import plugin as plugin_module
 
         # Use a real object to verify setattr isn't called
         class FakeConfig:
@@ -64,25 +74,65 @@ class TestPytestConfigure:
 
         config = FakeConfig()
 
-        plugin.pytest_configure(config)
+        plugin_module.pytest_configure(config)
 
         # _pytest_crap_enabled should not be set when --crap is False
         assert not hasattr(config, "_pytest_crap_enabled")
 
     def test_sets_enabled_flag_when_crap_enabled(self) -> None:
         """When --crap is set, should set _pytest_crap_enabled = True."""
-        config = MagicMock(spec=[])  # Empty spec so setattr works normally
-        config.getoption = MagicMock(return_value=True)
+        from pytest_crap import plugin as plugin_module
 
-        plugin.pytest_configure(config)
+        class FakeConfig:
+            def getoption(self, name: str) -> bool:
+                return True
+
+        config = FakeConfig()
+
+        plugin_module.pytest_configure(config)
 
         assert getattr(config, "_pytest_crap_enabled", False) is True
+
+
+class FakeOption:
+    """Fake option object."""
+
+    def __init__(self, verbose: int = 0) -> None:
+        self.verbose = verbose
+
+
+class FakeConfig:
+    """Fake config object that behaves correctly with getattr()."""
+
+    def __init__(
+        self,
+        crap_enabled: bool = True,
+        verbose: int = 0,
+        top_n: int = 20,
+        threshold: int = 30,
+    ) -> None:
+        if crap_enabled:
+            self._pytest_crap_enabled = True
+        # Note: if crap_enabled is False, we don't set the attribute at all
+        # This ensures getattr(..., False) returns False
+
+        self.option = FakeOption(verbose=verbose)
+        self._top_n = top_n
+        self._threshold = threshold
+        self.pluginmanager = MagicMock()
+
+    def getoption(self, name: str) -> Any:
+        if name == "--crap-top-n":
+            return self._top_n
+        if name == "--crap-threshold":
+            return self._threshold
+        return None
 
 
 class TestPytestTerminalSummary:
     """Tests for pytest_terminal_summary hook."""
 
-    def _make_mocks(
+    def _make_config(
         self,
         crap_enabled: bool = True,
         cov_plugin: Any = "present",
@@ -90,27 +140,18 @@ class TestPytestTerminalSummary:
         coverage_obj: Any = "present",
         measured_files: list[str] | None = None,
         file_lines: dict[str, list[int]] | None = None,
-    ) -> tuple[MagicMock, MagicMock]:
+        verbose: int = 0,
+        top_n: int = 20,
+        threshold: int = 30,
+    ) -> tuple[MagicMock, FakeConfig]:
         """Create mock terminalreporter and config objects."""
         tr = MagicMock()
-        config = MagicMock()
-
-        # Set _pytest_crap_enabled attribute
-        config._pytest_crap_enabled = crap_enabled
-
-        # Configure verbose option
-        config.option = MagicMock()
-        config.option.verbose = 0
-
-        # Configure getoption for threshold and top_n
-        def getoption_side_effect(opt: str) -> Any:
-            if opt == "--crap-top-n":
-                return 20
-            if opt == "--crap-threshold":
-                return 30
-            return None
-
-        config.getoption = MagicMock(side_effect=getoption_side_effect)
+        config = FakeConfig(
+            crap_enabled=crap_enabled,
+            verbose=verbose,
+            top_n=top_n,
+            threshold=threshold,
+        )
 
         # Configure plugin manager
         if cov_plugin == "present":
@@ -149,9 +190,11 @@ class TestPytestTerminalSummary:
 
     def test_returns_early_when_crap_disabled(self) -> None:
         """When _pytest_crap_enabled is False, should return immediately."""
-        tr, config = self._make_mocks(crap_enabled=False)
+        from pytest_crap import plugin as plugin_module
 
-        plugin.pytest_terminal_summary(tr, 0, config)
+        tr, config = self._make_config(crap_enabled=False)
+
+        plugin_module.pytest_terminal_summary(tr, 0, config)
 
         # Should not write anything
         tr.write_line.assert_not_called()
@@ -159,9 +202,11 @@ class TestPytestTerminalSummary:
 
     def test_warns_when_cov_plugin_missing(self) -> None:
         """When pytest-cov plugin is not found, should warn."""
-        tr, config = self._make_mocks(cov_plugin=None)
+        from pytest_crap import plugin as plugin_module
 
-        plugin.pytest_terminal_summary(tr, 0, config)
+        tr, config = self._make_config(cov_plugin=None)
+
+        plugin_module.pytest_terminal_summary(tr, 0, config)
 
         # Should warn about missing plugin
         tr.write_sep.assert_called()
@@ -170,9 +215,11 @@ class TestPytestTerminalSummary:
 
     def test_warns_when_cov_controller_missing(self) -> None:
         """When coverage controller is not initialized, should warn."""
-        tr, config = self._make_mocks(cov_controller=None)
+        from pytest_crap import plugin as plugin_module
 
-        plugin.pytest_terminal_summary(tr, 0, config)
+        tr, config = self._make_config(cov_controller=None)
+
+        plugin_module.pytest_terminal_summary(tr, 0, config)
 
         # Should warn about missing controller
         tr.write_sep.assert_called()
@@ -181,9 +228,11 @@ class TestPytestTerminalSummary:
 
     def test_warns_when_coverage_obj_missing(self) -> None:
         """When coverage object is not found, should warn."""
-        tr, config = self._make_mocks(coverage_obj=None)
+        from pytest_crap import plugin as plugin_module
 
-        plugin.pytest_terminal_summary(tr, 0, config)
+        tr, config = self._make_config(coverage_obj=None)
+
+        plugin_module.pytest_terminal_summary(tr, 0, config)
 
         # Should warn about missing coverage object
         tr.write_sep.assert_called()
@@ -192,9 +241,11 @@ class TestPytestTerminalSummary:
 
     def test_warns_when_no_coverage_data(self) -> None:
         """When no files have coverage data, should warn."""
-        tr, config = self._make_mocks(measured_files=[])
+        from pytest_crap import plugin as plugin_module
 
-        plugin.pytest_terminal_summary(tr, 0, config)
+        tr, config = self._make_config(measured_files=[])
+
+        plugin_module.pytest_terminal_summary(tr, 0, config)
 
         # Should warn about no coverage data
         tr.write_sep.assert_called()
@@ -203,12 +254,14 @@ class TestPytestTerminalSummary:
 
     def test_skips_test_files(self) -> None:
         """Test files should be skipped from analysis."""
-        tr, config = self._make_mocks(
+        from pytest_crap import plugin as plugin_module
+
+        tr, config = self._make_config(
             measured_files=["/path/to/test_something.py"],
             file_lines={"/path/to/test_something.py": [1, 2, 3]},
         )
 
-        plugin.pytest_terminal_summary(tr, 0, config)
+        plugin_module.pytest_terminal_summary(tr, 0, config)
 
         # Should warn about no functions found (test files skipped)
         tr.write_sep.assert_called()
@@ -217,7 +270,9 @@ class TestPytestTerminalSummary:
 
     def test_skips_non_python_files(self) -> None:
         """Non-Python files should be skipped from analysis."""
-        tr, config = self._make_mocks(
+        from pytest_crap import plugin as plugin_module
+
+        tr, config = self._make_config(
             measured_files=["/path/to/data.txt", "/path/to/config.json"],
             file_lines={
                 "/path/to/data.txt": [1, 2, 3],
@@ -225,21 +280,16 @@ class TestPytestTerminalSummary:
             },
         )
 
-        plugin.pytest_terminal_summary(tr, 0, config)
+        plugin_module.pytest_terminal_summary(tr, 0, config)
 
         # Should warn about no functions found
         tr.write_sep.assert_called()
         call_args = tr.write_sep.call_args[0]
         assert "no functions found to analyze" in call_args[1]
 
-    @patch("pytest_crap.calculator.calculate_crap")
-    @patch("pytest_crap.reporter.CrapReporter")
-    def test_successful_report_generation(
-        self, mock_reporter_cls: MagicMock, mock_calculate: MagicMock
-    ) -> None:
+    def test_successful_report_generation(self) -> None:
         """When everything works, should generate CRAP report."""
-        import os
-        import tempfile
+        from pytest_crap import plugin as plugin_module
 
         # Create a real temporary Python file for the test
         with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
@@ -247,7 +297,7 @@ class TestPytestTerminalSummary:
             temp_file = f.name
 
         try:
-            tr, config = self._make_mocks(
+            tr, config = self._make_config(
                 measured_files=[temp_file],
                 file_lines={temp_file: [1]},
             )
@@ -255,16 +305,23 @@ class TestPytestTerminalSummary:
             # Mock calculate_crap to return some scores
             mock_score = MagicMock()
             mock_score.crap = 5.0
-            mock_calculate.return_value = [mock_score]
 
             # Mock the reporter
             mock_reporter = MagicMock()
-            mock_reporter_cls.return_value = mock_reporter
 
-            plugin.pytest_terminal_summary(tr, 0, config)
-
-            # Should have called calculate_crap
-            mock_calculate.assert_called()
+            with (
+                patch.object(
+                    sys.modules["pytest_crap.calculator"],
+                    "calculate_crap",
+                    return_value=[mock_score],
+                ),
+                patch.object(
+                    sys.modules["pytest_crap.reporter"],
+                    "CrapReporter",
+                    return_value=mock_reporter,
+                ),
+            ):
+                plugin_module.pytest_terminal_summary(tr, 0, config)
 
             # Should have rendered reports
             mock_reporter.render_function_table.assert_called_once()
@@ -273,53 +330,53 @@ class TestPytestTerminalSummary:
         finally:
             os.unlink(temp_file)
 
-    @patch("pytest_crap.calculator.calculate_crap")
-    def test_handles_parse_errors_gracefully(self, mock_calculate: MagicMock) -> None:
+    def test_handles_parse_errors_gracefully(self) -> None:
         """Parse errors should be handled gracefully."""
-        import os
-        import tempfile
+        from pytest_crap import plugin as plugin_module
 
-        # Create a temporary Python file
         with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write("def foo(): pass\n")
             temp_file = f.name
 
         try:
-            tr, config = self._make_mocks(
+            tr, config = self._make_config(
                 measured_files=[temp_file],
                 file_lines={temp_file: [1]},
             )
 
-            # Make calculate_crap raise an exception
-            mock_calculate.side_effect = SyntaxError("parse error")
-
-            plugin.pytest_terminal_summary(tr, 0, config)
+            with patch.object(
+                sys.modules["pytest_crap.calculator"],
+                "calculate_crap",
+                side_effect=SyntaxError("parse error"),
+            ):
+                plugin_module.pytest_terminal_summary(tr, 0, config)
 
             # Should warn about no functions found (due to parse error)
             tr.write_sep.assert_called()
         finally:
             os.unlink(temp_file)
 
-    @patch("pytest_crap.calculator.calculate_crap")
-    def test_verbose_mode_shows_parse_errors(self, mock_calculate: MagicMock) -> None:
+    def test_verbose_mode_shows_parse_errors(self) -> None:
         """In verbose mode, parse errors should be shown."""
-        import os
-        import tempfile
+        from pytest_crap import plugin as plugin_module
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write("def foo(): pass\n")
             temp_file = f.name
 
         try:
-            tr, config = self._make_mocks(
+            tr, config = self._make_config(
                 measured_files=[temp_file],
                 file_lines={temp_file: [1]},
+                verbose=1,
             )
-            config.option.verbose = 1  # Enable verbose mode
 
-            mock_calculate.side_effect = SyntaxError("parse error")
-
-            plugin.pytest_terminal_summary(tr, 0, config)
+            with patch.object(
+                sys.modules["pytest_crap.calculator"],
+                "calculate_crap",
+                side_effect=SyntaxError("parse error"),
+            ):
+                plugin_module.pytest_terminal_summary(tr, 0, config)
 
             # Should have written the error message
             write_line_calls = [str(call) for call in tr.write_line.call_args_list]
@@ -327,35 +384,39 @@ class TestPytestTerminalSummary:
         finally:
             os.unlink(temp_file)
 
-    @patch("pytest_crap.calculator.calculate_crap")
-    @patch("pytest_crap.reporter.CrapReporter")
-    def test_exception_during_report_shows_error(
-        self, mock_reporter_cls: MagicMock, mock_calculate: MagicMock
-    ) -> None:
+    def test_exception_during_report_shows_error(self) -> None:
         """Exceptions during report generation should show error message."""
-        import os
-        import tempfile
+        from pytest_crap import plugin as plugin_module
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write("def foo(): pass\n")
             temp_file = f.name
 
         try:
-            tr, config = self._make_mocks(
+            tr, config = self._make_config(
                 measured_files=[temp_file],
                 file_lines={temp_file: [1]},
             )
 
             mock_score = MagicMock()
             mock_score.crap = 5.0
-            mock_calculate.return_value = [mock_score]
 
-            # Make reporter raise an exception
             mock_reporter = MagicMock()
             mock_reporter.render_function_table.side_effect = RuntimeError("render failed")
-            mock_reporter_cls.return_value = mock_reporter
 
-            plugin.pytest_terminal_summary(tr, 0, config)
+            with (
+                patch.object(
+                    sys.modules["pytest_crap.calculator"],
+                    "calculate_crap",
+                    return_value=[mock_score],
+                ),
+                patch.object(
+                    sys.modules["pytest_crap.reporter"],
+                    "CrapReporter",
+                    return_value=mock_reporter,
+                ),
+            ):
+                plugin_module.pytest_terminal_summary(tr, 0, config)
 
             # Should show error message
             tr.write_sep.assert_called()
@@ -364,35 +425,40 @@ class TestPytestTerminalSummary:
         finally:
             os.unlink(temp_file)
 
-    @patch("pytest_crap.calculator.calculate_crap")
-    @patch("pytest_crap.reporter.CrapReporter")
-    def test_verbose_exception_shows_traceback(
-        self, mock_reporter_cls: MagicMock, mock_calculate: MagicMock
-    ) -> None:
+    def test_verbose_exception_shows_traceback(self) -> None:
         """In verbose mode, exceptions should show full traceback."""
-        import os
-        import tempfile
+        from pytest_crap import plugin as plugin_module
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write("def foo(): pass\n")
             temp_file = f.name
 
         try:
-            tr, config = self._make_mocks(
+            tr, config = self._make_config(
                 measured_files=[temp_file],
                 file_lines={temp_file: [1]},
+                verbose=1,
             )
-            config.option.verbose = 1
 
             mock_score = MagicMock()
             mock_score.crap = 5.0
-            mock_calculate.return_value = [mock_score]
 
             mock_reporter = MagicMock()
             mock_reporter.render_function_table.side_effect = RuntimeError("render failed")
-            mock_reporter_cls.return_value = mock_reporter
 
-            plugin.pytest_terminal_summary(tr, 0, config)
+            with (
+                patch.object(
+                    sys.modules["pytest_crap.calculator"],
+                    "calculate_crap",
+                    return_value=[mock_score],
+                ),
+                patch.object(
+                    sys.modules["pytest_crap.reporter"],
+                    "CrapReporter",
+                    return_value=mock_reporter,
+                ),
+            ):
+                plugin_module.pytest_terminal_summary(tr, 0, config)
 
             # Should have written traceback
             write_line_calls = [str(call) for call in tr.write_line.call_args_list]
@@ -400,43 +466,40 @@ class TestPytestTerminalSummary:
         finally:
             os.unlink(temp_file)
 
-    @patch("pytest_crap.calculator.calculate_crap")
-    @patch("pytest_crap.reporter.CrapReporter")
-    def test_respects_top_n_and_threshold_options(
-        self, mock_reporter_cls: MagicMock, mock_calculate: MagicMock
-    ) -> None:
+    def test_respects_top_n_and_threshold_options(self) -> None:
         """Options --crap-top-n and --crap-threshold should be passed to reporter."""
-        import os
-        import tempfile
+        from pytest_crap import plugin as plugin_module
 
         with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write("def foo(): pass\n")
             temp_file = f.name
 
         try:
-            tr, config = self._make_mocks(
+            tr, config = self._make_config(
                 measured_files=[temp_file],
                 file_lines={temp_file: [1]},
+                top_n=10,
+                threshold=25,
             )
-
-            # Custom option values
-            def getoption_side_effect(opt: str) -> Any:
-                if opt == "--crap-top-n":
-                    return 10
-                if opt == "--crap-threshold":
-                    return 25
-                return None
-
-            config.getoption = MagicMock(side_effect=getoption_side_effect)
 
             mock_score = MagicMock()
             mock_score.crap = 5.0
-            mock_calculate.return_value = [mock_score]
 
             mock_reporter = MagicMock()
-            mock_reporter_cls.return_value = mock_reporter
 
-            plugin.pytest_terminal_summary(tr, 0, config)
+            with (
+                patch.object(
+                    sys.modules["pytest_crap.calculator"],
+                    "calculate_crap",
+                    return_value=[mock_score],
+                ),
+                patch.object(
+                    sys.modules["pytest_crap.reporter"],
+                    "CrapReporter",
+                    return_value=mock_reporter,
+                ),
+            ):
+                plugin_module.pytest_terminal_summary(tr, 0, config)
 
             # Check that options were passed correctly
             mock_reporter.render_function_table.assert_called_once()
@@ -466,8 +529,6 @@ class TestModuleImport:
 
     def test_plugin_module_imports(self) -> None:
         """Reload plugin module to capture import-time code coverage."""
-        import importlib
-
         import pytest_crap.plugin
 
         # Reload to execute import-time code while coverage is active
