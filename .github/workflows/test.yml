@@ -49,4 +49,4 @@ jobs:
         run: poetry run mypy pytest_crap
 
       - name: Run pytest
-        run: poetry run pytest --cov-fail-under=80
+        run: poetry run pytest --cov-fail-under=100

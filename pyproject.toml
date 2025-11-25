@@ -66,7 +66,7 @@ addopts = [
     "--cov=pytest_crap",
     "--cov-report=term-missing",
     "--cov-report=html",
-    "--cov-fail-under=80",
+    "--cov-fail-under=100",
     "--cov-branch",
 ]
 
@@ -91,7 +91,6 @@ mypy_path = "stubs"
 [tool.coverage.run]
 source = ["pytest_crap"]
 branch = true
-patch = ["subprocess"]
 omit = [
     "*/tests/*",
     "*/__pycache__/*",
