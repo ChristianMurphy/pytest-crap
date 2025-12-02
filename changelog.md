@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+## [0.3.0] - 2025-12-02
+
+### Changed
+
 - Tables are now responsive to terminal width (80-200 columns) instead of being cut off
 - File paths in tables now display relative to project root instead of absolute system paths
 
@@ -40,6 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Usage examples
   - CI/CD integration examples
 
-[Unreleased]: https://github.com/ChristianMurphy/pytest-crap/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/ChristianMurphy/pytest-crap/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/ChristianMurphy/pytest-crap/releases/tag/v0.3.0
 [0.2.0]: https://github.com/ChristianMurphy/pytest-crap/releases/tag/v0.2.0
 [0.1.0]: https://github.com/ChristianMurphy/pytest-crap/releases/tag/v0.1.0
