@@ -110,7 +110,10 @@ def pytest_terminal_summary(
         from .calculator import calculate_crap
         from .reporter import CrapReporter
 
-        reporter = CrapReporter()
+        # Get pytest's rootdir for relative path display
+        # Use rootpath (Path) if available (pytest 7+), fallback to rootdir
+        rootdir = str(getattr(config, "rootpath", None) or getattr(config, "rootdir", None))
+        reporter = CrapReporter(rootdir=rootdir)
         all_scores = []
 
         for filename, lines in file_lines.items():

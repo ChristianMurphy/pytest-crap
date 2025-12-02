@@ -1,6 +1,8 @@
 """Tests for the CrapReporter rendering."""
 
 import importlib
+import tempfile
+from pathlib import Path
 from typing import Any
 
 from rich.console import Console
@@ -289,3 +291,74 @@ class TestEdgeCases:
         assert "CRAP by Function" in out
         assert "CRAP by File" in out
         assert "CRAP by Folder" in out
+
+
+class TestRelativePaths:
+    """Test relative path functionality."""
+
+    def test_relative_path_with_rootdir(self) -> None:
+        """Test that paths are made relative when rootdir is set."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rootdir = Path(tmpdir)
+            reporter = reporter_module.CrapReporter(rootdir=str(rootdir))
+
+            # Create a test file path inside the tmpdir
+            test_file = rootdir / "src" / "module.py"
+
+            # Should return relative path
+            rel = reporter._relative_path(str(test_file))
+            assert rel == "src/module.py"
+
+    def test_relative_path_without_rootdir(self) -> None:
+        """Test that absolute paths are returned when no rootdir is set."""
+        reporter = reporter_module.CrapReporter(rootdir=None)
+
+        test_path = "/absolute/path/to/file.py"
+        result = reporter._relative_path(test_path)
+
+        # Should return the original path unchanged
+        assert result == test_path
+
+    def test_relative_path_outside_rootdir(self) -> None:
+        """Test that paths outside rootdir return original path."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            rootdir = Path(tmpdir) / "project"
+            rootdir.mkdir()
+            reporter = reporter_module.CrapReporter(rootdir=str(rootdir))
+
+            # Path outside rootdir
+            outside_path = "/some/other/path/file.py"
+            result = reporter._relative_path(outside_path)
+
+            # Should return original path
+            assert result == outside_path
+
+    def test_truncate_middle_short_text(self) -> None:
+        """Test truncate_middle with text shorter than max_length."""
+        reporter = reporter_module.CrapReporter()
+
+        result = reporter._truncate_middle("short.py", 50)
+        assert result == "short.py"
+
+    def test_truncate_middle_long_text(self) -> None:
+        """Test truncate_middle with text longer than max_length."""
+        reporter = reporter_module.CrapReporter()
+
+        long_text = "very/long/path/to/some/deeply/nested/file.py"
+        result = reporter._truncate_middle(long_text, 20)
+
+        # Should be exactly 20 characters
+        assert len(result) == 20
+        # Should contain ellipsis
+        assert "..." in result
+        # Should start with beginning and end with ending
+        assert result.startswith("very/long")
+        assert result.endswith("file.py")
+
+    def test_truncate_middle_very_short_max(self) -> None:
+        """Test truncate_middle with very short max_length."""
+        reporter = reporter_module.CrapReporter()
+
+        result = reporter._truncate_middle("filename.py", 3)
+        # Should return first 3 chars when max <= 3
+        assert result == "fil"

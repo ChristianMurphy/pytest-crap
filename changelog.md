@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Tables are now responsive to terminal width (80-200 columns) instead of being cut off
+- File paths in tables now display relative to project root instead of absolute system paths
+
 ## [0.2.0] - 2025-11-25
 
 - Support for Python 3.10 through 3.14

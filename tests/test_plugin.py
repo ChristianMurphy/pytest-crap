@@ -74,7 +74,7 @@ class TestPytestConfigure:
 
         config = FakeConfig()
 
-        plugin_module.pytest_configure(config)
+        plugin_module.pytest_configure(config)  # type: ignore[arg-type]
 
         # _pytest_crap_enabled should not be set when --crap is False
         assert not hasattr(config, "_pytest_crap_enabled")
@@ -89,7 +89,7 @@ class TestPytestConfigure:
 
         config = FakeConfig()
 
-        plugin_module.pytest_configure(config)
+        plugin_module.pytest_configure(config)  # type: ignore[arg-type]
 
         assert getattr(config, "_pytest_crap_enabled", False) is True
 
@@ -194,7 +194,7 @@ class TestPytestTerminalSummary:
 
         tr, config = self._make_config(crap_enabled=False)
 
-        plugin_module.pytest_terminal_summary(tr, 0, config)
+        plugin_module.pytest_terminal_summary(tr, 0, config)  # type: ignore[arg-type]
 
         # Should not write anything
         tr.write_line.assert_not_called()
@@ -206,7 +206,7 @@ class TestPytestTerminalSummary:
 
         tr, config = self._make_config(cov_plugin=None)
 
-        plugin_module.pytest_terminal_summary(tr, 0, config)
+        plugin_module.pytest_terminal_summary(tr, 0, config)  # type: ignore[arg-type]
 
         # Should warn about missing plugin
         tr.write_sep.assert_called()
@@ -219,7 +219,7 @@ class TestPytestTerminalSummary:
 
         tr, config = self._make_config(cov_controller=None)
 
-        plugin_module.pytest_terminal_summary(tr, 0, config)
+        plugin_module.pytest_terminal_summary(tr, 0, config)  # type: ignore[arg-type]
 
         # Should warn about missing controller
         tr.write_sep.assert_called()
@@ -232,7 +232,7 @@ class TestPytestTerminalSummary:
 
         tr, config = self._make_config(coverage_obj=None)
 
-        plugin_module.pytest_terminal_summary(tr, 0, config)
+        plugin_module.pytest_terminal_summary(tr, 0, config)  # type: ignore[arg-type]
 
         # Should warn about missing coverage object
         tr.write_sep.assert_called()
@@ -245,7 +245,7 @@ class TestPytestTerminalSummary:
 
         tr, config = self._make_config(measured_files=[])
 
-        plugin_module.pytest_terminal_summary(tr, 0, config)
+        plugin_module.pytest_terminal_summary(tr, 0, config)  # type: ignore[arg-type]
 
         # Should warn about no coverage data
         tr.write_sep.assert_called()
@@ -261,7 +261,7 @@ class TestPytestTerminalSummary:
             file_lines={"/path/to/test_something.py": [1, 2, 3]},
         )
 
-        plugin_module.pytest_terminal_summary(tr, 0, config)
+        plugin_module.pytest_terminal_summary(tr, 0, config)  # type: ignore[arg-type]
 
         # Should warn about no functions found (test files skipped)
         tr.write_sep.assert_called()
@@ -280,7 +280,7 @@ class TestPytestTerminalSummary:
             },
         )
 
-        plugin_module.pytest_terminal_summary(tr, 0, config)
+        plugin_module.pytest_terminal_summary(tr, 0, config)  # type: ignore[arg-type]
 
         # Should warn about no functions found
         tr.write_sep.assert_called()
@@ -321,7 +321,7 @@ class TestPytestTerminalSummary:
                     return_value=mock_reporter,
                 ),
             ):
-                plugin_module.pytest_terminal_summary(tr, 0, config)
+                plugin_module.pytest_terminal_summary(tr, 0, config)  # type: ignore[arg-type]
 
             # Should have rendered reports
             mock_reporter.render_function_table.assert_called_once()
@@ -349,7 +349,7 @@ class TestPytestTerminalSummary:
                 "calculate_crap",
                 side_effect=SyntaxError("parse error"),
             ):
-                plugin_module.pytest_terminal_summary(tr, 0, config)
+                plugin_module.pytest_terminal_summary(tr, 0, config)  # type: ignore[arg-type]
 
             # Should warn about no functions found (due to parse error)
             tr.write_sep.assert_called()
@@ -376,7 +376,7 @@ class TestPytestTerminalSummary:
                 "calculate_crap",
                 side_effect=SyntaxError("parse error"),
             ):
-                plugin_module.pytest_terminal_summary(tr, 0, config)
+                plugin_module.pytest_terminal_summary(tr, 0, config)  # type: ignore[arg-type]
 
             # Should have written the error message
             write_line_calls = [str(call) for call in tr.write_line.call_args_list]
@@ -416,7 +416,7 @@ class TestPytestTerminalSummary:
                     return_value=mock_reporter,
                 ),
             ):
-                plugin_module.pytest_terminal_summary(tr, 0, config)
+                plugin_module.pytest_terminal_summary(tr, 0, config)  # type: ignore[arg-type]
 
             # Should show error message
             tr.write_sep.assert_called()
@@ -458,7 +458,7 @@ class TestPytestTerminalSummary:
                     return_value=mock_reporter,
                 ),
             ):
-                plugin_module.pytest_terminal_summary(tr, 0, config)
+                plugin_module.pytest_terminal_summary(tr, 0, config)  # type: ignore[arg-type]
 
             # Should have written traceback
             write_line_calls = [str(call) for call in tr.write_line.call_args_list]
@@ -499,7 +499,7 @@ class TestPytestTerminalSummary:
                     return_value=mock_reporter,
                 ),
             ):
-                plugin_module.pytest_terminal_summary(tr, 0, config)
+                plugin_module.pytest_terminal_summary(tr, 0, config)  # type: ignore[arg-type]
 
             # Check that options were passed correctly
             mock_reporter.render_function_table.assert_called_once()
