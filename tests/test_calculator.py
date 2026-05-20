@@ -123,6 +123,152 @@ class C:
     assert math.isclose(m2.coverage_percent, expected_m2)
 
 
+def test_docstring_not_counted_towards_coverage() -> None:
+    """Docstring lines should not reduce coverage percentage."""
+    code = '''
+def foo():
+    """A docstring that should be ignored."""
+    return 1
+'''
+    # Only the return line is covered
+    executed: set[int] = {4}
+    scores = run_with_source(code, executed)
+    assert len(scores) == 1
+    s = scores[0]
+    # Without fix: total lines = 4-2+1 = 3, 1 covered -> 33.3%
+    # With fix: total lines = 4-4+1 = 1, 1 covered -> 100%
+    assert math.isclose(s.coverage_percent, 100.0)
+    assert math.isclose(s.crap, expected_crap(s.cc, 100.0))
+
+
+def test_docstring_partial_coverage() -> None:
+    """Docstring lines excluded but remaining lines counted correctly."""
+    code = '''
+def foo():
+    """A docstring."""
+    x = 1
+    if x:
+        return x
+    return 0
+'''
+    # Cover only the first executable line (x = 1)
+    executed: set[int] = {4}
+    scores = run_with_source(code, executed)
+    assert len(scores) == 1
+    s = scores[0]
+    # Executable range starts after the docstring (line 4) and ends at line 7.
+    # 4 executable lines (4-7), 1 covered -> 25%
+    executable_start = 4  # line after docstring
+    executable_end = s.end_line
+    total_lines = executable_end - executable_start + 1
+    covered = sum(1 for ln in range(executable_start, executable_end + 1) if ln in executed)
+    expected_percent = (covered / total_lines) * 100.0
+    assert math.isclose(s.coverage_percent, expected_percent)
+    assert math.isclose(s.crap, expected_crap(s.cc, s.coverage_percent))
+
+
+def test_multiline_docstring_coverage() -> None:
+    """Multiline docstrings should also be excluded from coverage range."""
+    code = '''
+def foo():
+    """Line 1
+    Line 2
+    Line 3"""
+    return 1
+'''
+    executed: set[int] = {6}
+    scores = run_with_source(code, executed)
+    assert len(scores) == 1
+    s = scores[0]
+    # Executable range: only line 6. 1 covered -> 100%
+    assert math.isclose(s.coverage_percent, 100.0)
+
+
+def test_blank_lines_not_counted_towards_coverage() -> None:
+    """Blank lines between statements should not reduce coverage percentage."""
+    code = """
+def foo():
+    a = 1
+
+    b = 2
+
+    return a + b
+"""
+    # Executable: def line, a=1, b=2, return.  Blank lines are excluded.
+    executed: set[int] = {2, 3, 5, 7}
+    scores = run_with_source(code, executed)
+    assert len(scores) == 1
+    s = scores[0]
+    assert math.isclose(s.coverage_percent, 100.0)
+    assert math.isclose(s.crap, expected_crap(s.cc, 100.0))
+
+
+def test_comment_lines_not_counted_towards_coverage() -> None:
+    """Comment-only lines should not reduce coverage percentage."""
+    code = """
+def foo():
+    # Step 1: initialise
+    a = 1
+    # Step 2: increment
+    a += 1
+    # Step 3: return
+    return a
+"""
+    # Executable: def line, a=1, a+=1, return.
+    executed: set[int] = {2, 4, 6, 8}
+    scores = run_with_source(code, executed)
+    assert len(scores) == 1
+    s = scores[0]
+    assert math.isclose(s.coverage_percent, 100.0)
+    assert math.isclose(s.crap, expected_crap(s.cc, 100.0))
+
+
+def test_blank_and_comment_lines_partial_coverage() -> None:
+    """Blank/comment lines excluded but coverage computed over remaining lines."""
+    code = """
+def foo():
+    # setup
+    a = 1
+
+    # compute
+    b = a * 2
+
+    return b
+"""
+    # Executable lines: def(2), a=1(4), b=a*2(7), return(9) = 4 total.
+    # Cover def + a=1 + return b = 3 of 4 = 75%.
+    executed: set[int] = {2, 4, 9}
+    scores = run_with_source(code, executed)
+    assert len(scores) == 1
+    s = scores[0]
+    assert math.isclose(s.coverage_percent, 75.0)
+    assert math.isclose(s.crap, expected_crap(s.cc, 75.0))
+
+
+def test_docstring_blank_and_comment_all_filtered() -> None:
+    """Docstring, blank, and comment lines are all excluded."""
+    code = (
+        "\n"
+        "def foo():\n"
+        '    """Docstring."""\n'
+        "    # setup\n"
+        "    a = 1\n"
+        "\n"
+        "    # compute\n"
+        "    b = a * 2\n"
+        "\n"
+        "    return b\n"
+    )
+    # Executable: def(2), a=1(5), b=a*2(8), return(10).  4 lines.
+    # Cover all 4 -> 100%.
+    executed: set[int] = {2, 5, 8, 10}
+    scores = run_with_source(code, executed)
+    assert len(scores) == 1
+    s = scores[0]
+    assert math.isclose(s.coverage_percent, 100.0)
+    assert math.isclose(s.crap, expected_crap(s.cc, 100.0))
+
+
 def test_cc_visit_node_without_lineno() -> None:
     """Test handling of CC nodes without lineno."""
     code = """
